@@ -41,18 +41,24 @@ def parse_local(value: str) -> dt.datetime:
     if not LOCAL_RE.match(value):
         raise invalid("starts_at_local must be a local YYYY-MM-DDTHH:MM")
     try:
-        return dt.datetime.strptime(value, "%Y-%m-%dT%H:%M")
+        naive = dt.datetime.strptime(value, "%Y-%m-%dT%H:%M")
     except ValueError:
         raise invalid("starts_at_local is not a valid date and time") from None
+    if not MIN_YEAR <= naive.year <= MAX_YEAR:
+        raise invalid(f"starts_at_local year must be from {MIN_YEAR} to {MAX_YEAR}")
+    return naive
 
 
 def parse_date(value: str) -> dt.date:
     if not DATE_RE.match(value):
         raise invalid("date must be YYYY-MM-DD")
     try:
-        return dt.date.fromisoformat(value)
+        day = dt.date.fromisoformat(value)
     except ValueError:
         raise invalid("date is not a valid calendar date") from None
+    if not MIN_YEAR <= day.year <= MAX_YEAR:
+        raise invalid(f"date year must be from {MIN_YEAR} to {MAX_YEAR}")
+    return day
 
 
 def parse_hhmm(value: object) -> int | None:
@@ -84,8 +90,13 @@ def resolve(naive: dt.datetime, tz_name: str) -> int | None:
     return int(aware.timestamp())
 
 
+EPOCH = dt.datetime(1970, 1, 1, tzinfo=dt.timezone.utc)
+MIN_YEAR, MAX_YEAR = 1000, 9998  # keeps every instant and its local rendering in range
+
+
 def rfc3339(ts: int, tz_name: str) -> str:
-    return dt.datetime.fromtimestamp(ts, zone(tz_name)).isoformat()
+    # Arithmetic from the epoch, not fromtimestamp(): works for pre-1970 instants everywhere.
+    return (EPOCH + dt.timedelta(seconds=ts)).astimezone(zone(tz_name)).isoformat()
 
 
 def now_ts() -> float:

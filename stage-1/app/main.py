@@ -13,7 +13,7 @@ from fastapi.exceptions import RequestValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.responses import Response
 
-from . import fixture, security, store
+from . import fixture, security, store, transfer
 from .errors import ApiError, JSONUtf8Response, error_response, invalid, malformed, not_found
 from .timeutil import check_start, day_slots, format_local, now_rfc3339, now_ts, parse_date, parse_local, rfc3339, zone
 
@@ -471,3 +471,75 @@ async def amend_reservation(reference: str, request: Request):
         apply_amendment(row, new)
         out = reservation_out(reservation_by_id(row["id"]))
     return ok(out)
+
+
+# ------------------------------------------------------------------ batch moves (§11)
+
+def validate_moves_shape(body: dict) -> list[dict]:
+    moves = body.get("moves", MISSING)
+    if moves is MISSING:
+        raise invalid("moves is required")
+    if not isinstance(moves, list) or not 1 <= len(moves) <= 8:
+        raise invalid("moves must be a list of 1 to 8 items")
+    refs = set()
+    for item in moves:
+        if not isinstance(item, dict) or not isinstance(item.get("reference"), str):
+            raise invalid("every move needs a string reference")
+        if item["reference"] in refs:
+            raise invalid("references in one batch must be distinct")
+        refs.add(item["reference"])
+    return moves
+
+
+@app.post("/reservation-moves")
+async def reservation_moves(request: Request):
+    user = authenticate(request)
+    body = await json_object(request)
+    key = idempotency_key(request)
+    request_text = canonical(body)
+    path = "/reservation-moves"
+    with store.tx():
+        replay = find_receipt(user["id"], path, key, request_text)
+        if replay is not None:
+            return replay
+        moves = validate_moves_shape(body)
+        rows = [own_reservation(user["id"], m["reference"]) for m in moves]
+        if len({r["restaurant_id"] for r in rows}) != 1:
+            raise invalid("all bookings in one batch must belong to the same restaurant")
+        restaurant = store.get_restaurant(rows[0]["restaurant_id"])
+        # Non-occupancy errors first, in input order (cutoff first for each booking).
+        plans = [plan_amendment(row, restaurant, m, cutoff_first=True) for row, m in zip(rows, moves)]
+        # Occupancy on the final set: listed bookings' old intervals are released,
+        # their new ones (changed or not) are held.
+        listed = [row["id"] for row in rows]
+        for i, plan in enumerate(plans):
+            if not plan["moves"]:
+                continue
+            if store.overlapping(restaurant["id"], plan["table_id"], plan["start_ts"], plan["end_ts"],
+                                 exclude_ids=listed):
+                raise ApiError(409, "table_unavailable", "a table is taken for an overlapping time")
+            for j, other in enumerate(plans):
+                if j != i and other["table_id"] == plan["table_id"] \
+                        and other["start_ts"] < plan["end_ts"] and other["end_ts"] > plan["start_ts"]:
+                    raise ApiError(409, "table_unavailable", "two moved bookings would overlap")
+        for row, plan in zip(rows, plans):
+            apply_amendment(row, plan)
+        out = {"reservations": [reservation_out(reservation_by_id(row["id"])) for row in rows]}
+        store_receipt(user["id"], path, key, request_text, 201, out)
+    return ok(out, 201)
+
+
+# ------------------------------------------------------------------ export / import (§10)
+
+@app.get("/_test/export")
+async def export_state():
+    return ok(transfer.export_state())
+
+
+@app.post("/_test/import")
+async def import_state(request: Request):
+    body = await json_object(request)
+    rows = transfer.validate_import(body)
+    with store.tx():
+        transfer.replace_state(rows)
+    return Response(status_code=204)
