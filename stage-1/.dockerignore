@@ -1,0 +1,8 @@
+acceptance
+**/__pycache__
+**/*.pyc
+.pytest_cache
+*.log
+RUN.md
+Dockerfile
+.dockerignore
