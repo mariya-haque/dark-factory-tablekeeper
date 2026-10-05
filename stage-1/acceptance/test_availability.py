@@ -97,10 +97,11 @@ def test_fixture_order_of_tables(api):
 
 
 def test_booking_removes_table_from_overlapping_slots_only(api):
-    """S1-R61 S1-R02: 19:00 booking occupies [19:00, 20:30)."""
+    """S1-R61 S1-R02: 19:00 booking occupies [19:00, 20:30); a slot at S would occupy
+    [S, S+90), so it conflicts when S < 20:30 and 19:00 < S+90 (18:00 included)."""
     api.booked("ada", "r_anker", "t_2", f"{THU}T19:00")
     slots = api.slots("r_anker", THU, 2)
-    for t, free in [("18:00", True), ("18:30", False), ("19:00", False), ("19:30", False),
+    for t, free in [("18:00", False), ("18:30", False), ("19:00", False), ("19:30", False),
                     ("20:00", False), ("20:30", True), ("21:00", True)]:
         assert ("t_2" in slots[f"{THU}T{t}"]["available_table_ids"]) == free, t
         assert "t_1" in slots[f"{THU}T{t}"]["available_table_ids"]
