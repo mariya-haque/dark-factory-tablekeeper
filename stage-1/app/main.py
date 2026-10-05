@@ -237,10 +237,24 @@ def apply_amendment(row: dict, new: dict) -> None:
 
 # ------------------------------------------------------------------ runtime
 
+def zones_available() -> bool:
+    try:
+        zone("UTC"), zone("Europe/Berlin"), zone("America/New_York")
+    except Exception:
+        return False
+    return True
+
+
+if not zones_available():
+    log.error("IANA time zone data not found: install the pinned tzdata package "
+              "(python -m pip install -r requirements.txt); /health reports 503 until then")
+
+
 @app.get("/health")
 async def health():
     store.conn.execute("SELECT 1").fetchone()
-    zone("Europe/Berlin")
+    if not zones_available():
+        return error_response(503, "unavailable", "IANA time zone data (tzdata) is not installed")
     return ok({"status": "ok"})
 
 

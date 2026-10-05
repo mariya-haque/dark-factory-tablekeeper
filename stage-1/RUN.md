@@ -21,6 +21,11 @@ Needs Python 3.12+ with the pinned packages installed once:
 
     python -m pip install -r requirements.txt
 
+This includes `tzdata`, the IANA zone database. Windows has no system zone database,
+so without it the service cannot resolve restaurant time zones: it logs an error at
+start and `GET /health` answers 503 instead of 200. Check with
+`python -c "import zoneinfo; zoneinfo.ZoneInfo('Europe/Berlin')"`.
+
 Then start it from this folder (POSIX sh; works from Windows Git Bash):
 
     PORT=18200 sh serve.sh

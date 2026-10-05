@@ -9,6 +9,8 @@ from .errors import invalid
 from .timeutil import WEEKDAYS, now_rfc3339, parse_hhmm, parse_local, resolve, valid_zone
 
 EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+$")
+REFERENCE_RE = re.compile(r"^[A-Z0-9]{6,12}$")  # §8: 6 to 12 characters of A-Z0-9
+RFC3339_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2})$")
 MAX_ID = 64
 
 
@@ -116,7 +118,9 @@ def validate(body: dict) -> dict:
     for x in need_list(body, "reservations"):
         x = need_obj(x, "reservation")
         xid = need_id(x.get("id"), "reservation.id")
-        ref = need_id(x.get("reference"), "reservation.reference")
+        ref = x.get("reference")
+        if not isinstance(ref, str) or not REFERENCE_RE.match(ref):
+            raise invalid("reservation.reference must be 6 to 12 characters of A-Z0-9")
         if xid in reservations or ref in refs:
             raise invalid("duplicate reservation id or reference")
         refs.add(ref)
@@ -141,14 +145,24 @@ def validate(body: dict) -> dict:
         if status not in ("confirmed", "cancelled"):
             raise invalid("reservation.status must be confirmed or cancelled")
         created_at = x.get("created_at", created)
-        if not isinstance(created_at, str):
-            raise invalid("reservation.created_at must be a string")
+        if not isinstance(created_at, str) or not RFC3339_RE.match(created_at):
+            raise invalid("reservation.created_at must be RFC 3339 with an explicit offset")
         reservations[xid] = {
             "id": xid, "reference": ref, "user_id": uid, "restaurant_id": rest["id"],
             "table_id": table["id"], "party_size": party, "status": status,
             "starts_at_local": local, "start_ts": start,
             "end_ts": start + rest["reservation_duration_minutes"] * 60, "created_at": created_at,
         }
+    # §1: two confirmed reservations never occupy one table at overlapping times.
+    by_table: dict[tuple[str, str], list[dict]] = {}
+    for x in reservations.values():
+        if x["status"] == "confirmed":
+            by_table.setdefault((x["restaurant_id"], x["table_id"]), []).append(x)
+    for held in by_table.values():
+        held.sort(key=lambda x: x["start_ts"])
+        for a, b in zip(held, held[1:]):
+            if b["start_ts"] < a["end_ts"]:
+                raise invalid(f"seeded reservations {a['id']} and {b['id']} overlap on one table")
     return {"users": list(users.values()), "restaurants": list(restaurants.values()),
             "reservations": list(reservations.values())}
 

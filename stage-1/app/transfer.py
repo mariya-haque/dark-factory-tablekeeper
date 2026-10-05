@@ -11,7 +11,7 @@ import sqlite3
 
 from . import store
 from .errors import invalid
-from .fixture import validate_opening_hours
+from .fixture import REFERENCE_RE, validate_opening_hours
 from .timeutil import LOCAL_RE, valid_zone
 
 TRACK = "tablekeeper"
@@ -101,7 +101,7 @@ def validate_import(body: dict) -> dict[str, list[dict]]:
     for x in rows["reservations"]:
         if x["user_id"] not in users or (x["restaurant_id"], x["table_id"]) not in tables \
                 or x["status"] not in ("confirmed", "cancelled") or x["party_size"] < 1 \
-                or not LOCAL_RE.match(x["starts_at_local"]) or x["end_ts"] <= x["start_ts"]:
+                or not LOCAL_RE.match(x["starts_at_local"]) or x["end_ts"] <= x["start_ts"]                 or not REFERENCE_RE.match(x["reference"]):
             raise invalid("state.reservations holds an invalid reservation")
     for k in rows["idempotency"]:
         if k["user_id"] not in users:
